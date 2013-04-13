@@ -14,19 +14,29 @@ def fast_get(url, connections=1):
 
 
 def get_range_responses(url, connection_count=4, byte_count=None):
+    # Determine the size of the file at the URL
     request = requests.get(url, stream=True)
     total_byte_count = int(request.headers['content-length'])
+
     if byte_count is None:
         byte_count = total_byte_count
     elif byte_count > total_byte_count:
         raise ValueError, ('Requested byte count (%s) exceeds available bytes '
                            '(%s).' % (byte_count, total_byte_count))
+
+    # Split the file into as many sections as we have connections, adding any
+    # remainder from uneven division to the last section.
     target_size = byte_count // connection_count
     extra_byte_count = byte_count - target_size * connection_count
     section_byte_counts = [target_size] * connection_count
     section_byte_counts[-1] += extra_byte_count
     assert(sum(section_byte_counts) == byte_count)
 
+    # For each section, request a streaming response for the corresponding
+    # bytes range of the file.  These responses can then be used to read the
+    # corresponding sections of the file using either the response's `read`
+    # method (allowing iterative reading), or by reading the entire section in
+    # one call by accessing the `content` attribute.
     section_byte_ranges = [(sum(section_byte_counts[:i]), sum(section_byte_counts[:i + 1]) - 1) for i in range(len(section_byte_counts))]
     data = [requests.get(url, stream=True, headers={'Range': 'bytes=%s-%s' % r}) for r in section_byte_ranges]
     return data
@@ -36,8 +46,13 @@ def main():
     byte_count = 30543
     url = 'http://remote.fobel.net/pub/0cadd539238263aaca0915b3bd065ca7/The.Office.US.S09E19.HDTV.x264-LOL.mp4'
 
-    request = requests.get(url, headers={'Range': 'bytes=0-%s' % (byte_count - 1)})
+    # Request streaming responses for 4 sections of the specified url.
     responses = get_range_responses(url, 4, byte_count=byte_count)
+    # Perform a single request for the same byte range as all the sections
+    # combined for comparison.
+    request = requests.get(url, headers={'Range': 'bytes=0-%s' % (byte_count - 1)})
+    # Verify that the combined result from the streaming response sections are
+    # equivalent to the response from the single combined request.
     assert(request.content == ''.join([r.content for r in responses]))
     return responses
 
