@@ -7,15 +7,13 @@ from copy import deepcopy
 from datetime import datetime
 from threading import Thread
 import time
+from uuid import uuid4
 
 from path import path
 import numpy as np
 import socket
 import requests
 import zmq
-
-
-socket.setdefaulttimeout(0.0001)
 
 
 def remove_overlaps(input_data):
@@ -68,10 +66,10 @@ def get_range_info(range_str):
     return OrderedDict([(k, int(data[k])) for k in ('start', 'end', 'total')])
 
 
-def get_data(i, stream_response, chunk_size=(1 << 10)):
+def get_data(i, push_uri, stream_response, chunk_size=(1 << 10)):
     ctx = zmq.Context.instance()
     push = zmq.Socket(ctx, zmq.PUSH)
-    push.connect('inproc://queue')
+    push.connect(push_uri)
     byte_count = int(stream_response.headers['content-length'])
     range_info = get_range_info(stream_response.headers['content-range'])
     content_iterator = stream_response.iter_content(chunk_size=chunk_size)
@@ -102,14 +100,16 @@ def get_ranges(data, value):
     return [i for i, d in enumerate(data) if value >= d[0] and value <= d[1]]
 
 
-def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10), file_handle=None):
+def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10),
+             file_handle=None):
     ctx = zmq.Context.instance()
     pull = zmq.Socket(ctx, zmq.PULL)
-    pull.bind('inproc://queue')
+    pull_uri = 'inproc://%s' % uuid4()
+    pull.bind(pull_uri)
 
     byte_count, responses = get_range_responses(url, connection_count,
                                                 byte_count=byte_count)
-    threads = [Thread(target=get_data, args=(i, r, chunk_size))
+    threads = [Thread(target=get_data, args=(i, pull_uri, r, chunk_size))
                for i, r in enumerate(responses)]
     for t in threads:
         t.start()
@@ -120,34 +120,37 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10), fil
         output = file_handle
     ranges = []
 
-    while True:
-        try:
-            start, end, data = pull.recv_multipart(flags=zmq.NOBLOCK)
-            output.flush()
-            output.seek(int(start))
-            ranges.append(map(int, (start, end)))
-            ranges = remove_overlaps(sorted(ranges))
-            output.write(data)
-            if len(ranges) == 1 and ranges[0][0] == 0 and ranges[0][1] == byte_count:
-                break
-            if file_handle is not None:
-                sys.stdout.write('\r%s/%s KB' % (sum([r[1] - r[0] for r in
-                                                      ranges]) >> 10,
-                                                 byte_count >> 10))
-        except zmq.ZMQError, e:
-            if e.errno == zmq.EAGAIN:
-                pass
-            else:
-                raise
-        time.sleep(0.001)
-    del ctx
-    if file_handle is None:
-        result = output.getvalue()
-        output.close()
-        return byte_count, result
-    else:
-        print ''
-        return byte_count, None
+    try:
+        while True:
+            try:
+                start, end, data = pull.recv_multipart(flags=zmq.NOBLOCK)
+                output.flush()
+                output.seek(int(start))
+                ranges.append(map(int, (start, end)))
+                ranges = remove_overlaps(sorted(ranges))
+                output.write(data)
+                if len(ranges) == 1 and ranges[0][0] == 0 and ranges[0][1] == byte_count:
+                    break
+                if file_handle is not None:
+                    sys.stdout.write('\r%s/%s KB' % (sum([r[1] - r[0] for r in
+                                                        ranges]) >> 10,
+                                                    byte_count >> 10))
+            except zmq.ZMQError, e:
+                if e.errno == zmq.EAGAIN:
+                    pass
+                else:
+                    raise
+            time.sleep(0.001)
+    finally:
+        pull.close()
+        del ctx
+        if file_handle is None:
+            result = output.getvalue()
+            output.close()
+        else:
+            result = None
+            print ''
+    return byte_count, result
 
 
 def test__fast_get():
