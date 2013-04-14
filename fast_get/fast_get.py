@@ -10,7 +10,6 @@ import time
 from uuid import uuid4
 
 from path import path
-import numpy as np
 import socket
 import requests
 import zmq
@@ -154,6 +153,7 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10),
 
 
 def test__fast_get():
+    import numpy as np
     #test__fast_get(args.url, args.byte_count, args.chunk_size)
     start = datetime.now()
     byte_count = 10 << 20
