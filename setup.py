@@ -11,5 +11,5 @@ setup(name = 'fast_get',
     license = 'GPL',
     long_description = '''''',
     packages = ['fast_get'],
-    #scripts = ['scripts/fast_get']
+    scripts = ['scripts/fast_get']
 )
