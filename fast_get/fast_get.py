@@ -7,6 +7,7 @@ from datetime import datetime
 from threading import Thread
 import time
 
+from path import path
 import numpy as np
 import socket
 import requests
@@ -90,7 +91,7 @@ def get_data(i, stream_response, chunk_size=(1 << 10)):
         except Exception, e:
             import traceback; traceback.print_exc()
             failure_count += 1
-    print dict(bytes_seen=bytes_seen, failure_count=failure_count)
+    #print dict(bytes_seen=bytes_seen, failure_count=failure_count)
     push.close()
     del push
     del ctx
@@ -100,7 +101,7 @@ def get_ranges(data, value):
     return [i for i, d in enumerate(data) if value >= d[0] and value <= d[1]]
 
 
-def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10)):
+def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10), file_handle=None):
     ctx = zmq.Context.instance()
     pull = zmq.Socket(ctx, zmq.PULL)
     pull.bind('inproc://queue')
@@ -112,12 +113,16 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10)):
     for t in threads:
         t.start()
 
-    output = StringIO.StringIO()
+    if file_handle is None:
+        output = StringIO.StringIO()
+    else:
+        output = file_handle
     ranges = []
 
     while True:
         try:
             start, end, data = pull.recv_multipart(flags=zmq.NOBLOCK)
+            output.flush()
             output.seek(int(start))
             ranges.append(map(int, (start, end)))
             ranges = remove_overlaps(sorted(ranges))
@@ -130,27 +135,31 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10)):
             else:
                 raise
         time.sleep(0.001)
-    print 'wrote sections'
-    result = output.getvalue()
-    output.close()
     del ctx
-    return result
+    if file_handle is None:
+        result = output.getvalue()
+        output.close()
+        return byte_count, result
+    else:
+        return byte_count, None
 
 
-def main():
+def test__fast_get():
+    #test__fast_get(args.url, args.byte_count, args.chunk_size)
+    start = datetime.now()
     byte_count = 10 << 20
-    url = 'http://remote.fobel.net/pub/0cadd539238263aaca0915b3bd065ca7/The.Office.US.S09E19.HDTV.x264-LOL.mp4'
-
-    for chunk_size in [12 << 10]:
-        start = datetime.now()
-        output = fast_get(url, 5, byte_count, chunk_size)
-        end = datetime.now()
-        print 'chunk_size:', chunk_size, (byte_count >> 10) / (end - start).total_seconds()
+    url = 'http://mirror.anl.gov/pub/ubuntu-iso/DVDs/ubuntu/12.10/release/ubuntu-12.10-server-powerpc.iso'
+    connection_count = 5
+    chunk_size = 10 << 10
+    output = fast_get(url, connection_count, byte_count, chunk_size)
+    end = datetime.now()
+    print 'chunk_size:', chunk_size, (
+            (byte_count >> 10) / (end - start).total_seconds())
 
     start = datetime.now()
-    verify_data = requests.get(url, stream=True, headers={'Range': 'bytes=0-%s'
-                                                          % (byte_count -
-                                                             1)}).content
+    verify_data = requests.get(url, stream=True,
+                               headers={'Range': 'bytes=0-%s' %
+                                        (byte_count - 1)}).content
     end = datetime.now()
     print (byte_count >> 10) / (end - start).total_seconds()
     assert(len(output) == len(verify_data))
@@ -159,7 +168,40 @@ def main():
         verify_array = np.array([v for v in verify_data])
         print np.where(output_array != verify_array)
         raise ValueError, 'output != verify_data'
-    return output
+
+
+def parse_args():
+    """Parses arguments, returns (options, args)."""
+    from argparse import ArgumentParser
+    parser = ArgumentParser(description="""Download accelerator""")
+    parser.add_argument('-c', dest='connection_count', default=2, type=int)
+    parser.add_argument('-s', dest='chunk_size', default=(10 << 10), type=int)
+    parser.add_argument('-o', dest='output_file', type=path, default=None)
+    parser.add_argument(nargs=1, dest='url', type=str)
+    parser.add_argument(nargs='?', dest='byte_count', type=int, default=None)
+    args = parser.parse_args()
+    args.url = args.url[0]
+    return args
+
+
+def main():
+    args = parse_args()
+    start = datetime.now()
+    if args.output_file:
+        output_file = args.output_file.open('wb')
+    else:
+        output_file = None
+    byte_count, output = fast_get(args.url, args.connection_count,
+                                  args.byte_count, args.chunk_size,
+                                  output_file)
+    end = datetime.now()
+    if args.output_file:
+        output_file.close()
+        print 'download complete: %s KB/s -> %s' % (
+                (byte_count >> 10) / (end - start).total_seconds(),
+                args.output_file)
+    else:
+        print output
 
 
 if __name__ == '__main__':
