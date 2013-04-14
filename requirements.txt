@@ -1,0 +1,6 @@
+Pygments==1.6
+argparse==1.2.1
+-e git+https://github.com/cfobel/path.py@da43890764f1ee508fe6c32582acd69b87240365#egg=path.py-dev
+pyzmq==13.0.2
+requests==1.2.0
+wsgiref==0.1.2
