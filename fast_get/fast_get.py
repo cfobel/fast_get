@@ -1,4 +1,5 @@
 from __future__ import division
+import sys
 import re
 from collections import OrderedDict
 import cStringIO as StringIO
@@ -129,6 +130,10 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10), fil
             output.write(data)
             if len(ranges) == 1 and ranges[0][0] == 0 and ranges[0][1] == byte_count:
                 break
+            if file_handle is not None:
+                sys.stdout.write('\r%s/%s KB' % (sum([r[1] - r[0] for r in
+                                                      ranges]) >> 10,
+                                                 byte_count >> 10))
         except zmq.ZMQError, e:
             if e.errno == zmq.EAGAIN:
                 pass
@@ -141,6 +146,7 @@ def fast_get(url, connection_count=4, byte_count=None, chunk_size=(1 << 10), fil
         output.close()
         return byte_count, result
     else:
+        print ''
         return byte_count, None
 
 
@@ -197,9 +203,9 @@ def main():
     end = datetime.now()
     if args.output_file:
         output_file.close()
-        print 'download complete: %s KB/s -> %s' % (
-                (byte_count >> 10) / (end - start).total_seconds(),
-                args.output_file)
+        duration = (end - start).total_seconds()
+        print 'download completed in %.2f seconds (%.0f KB/s) -> %s' % (
+                duration, (byte_count >> 10) / duration, args.output_file)
     else:
         print output
 
